@@ -1,0 +1,316 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Cognito User pool with Federated ID demo
+# https://aws.amazon.com/cognito/sla/
+# https://docs.aws.amazon.com/cognito/latest/developerguide/limits.html
+# git@github.com:awslabs/aws-cognito-angular2-quickstart.git
+
+Description: 'AWS CloudFormation Template for quickstart awslabs demo using cognito.
+              Sets up ID pool only to log in data to DynamoDB.
+              User pool requires manual/CLI setup after stack is deployed.'
+Metadata:
+  Version:
+    Description: "v1.0 - Serverless stack."
+  Deployments:
+    Description: 'This stack deploys resources to demo cognito with federated ID.'
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: Front End
+        Parameters:
+          - ClientName
+          - ProjectName
+Parameters:
+  # May be able to have upper case, check if things referring to it convert to lower case when needed (eg: url, rds)
+  ClientName:
+    AllowedPattern: '[a-z][a-z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+    Default: test
+    Description: The Client name, will be used for naming resources and URLs
+    MaxLength: 25
+    MinLength: 1
+    Type: String
+  ProjectName:
+    AllowedPattern: '[a-z]*[a-z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      lowercase characters.
+    Default: democognito
+    Description: The Project name, will be used for naming resources and URLs
+    MaxLength: 35
+    MinLength: 0
+    Type: String
+    # TODO: add domain name also, not yet supported
+    # TODO: not supported on cloudformation yet
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cognito-userpool.html
+#   IDProvider:
+#     AllowedValues:
+#       - None
+#       - Google
+#     ConstraintDescription: Identity provider.
+#     Default: None
+#     Description: 'Choose optional ID provider for user pool'
+#     Type: String
+#   AppId:
+#     Default: ""
+#     Description: 'Set App ID if choosing optional ID provider'
+#     Type: String
+#   AppSecret:
+#     NoEcho: true
+#     Default: ""
+#     Description: 'Set App Secret if choosing optional ID provider'
+#     Type: String
+# Conditions:
+#   CreateIDP: !Not [ !Equals [ !Ref IDProvider, "None" ] ]
+Resources:
+  AppName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      AllowedPattern: "^[a-z]+-[a-z0-9-]+$"
+      Type: String
+      Value: !Join [ "-", ["test", !Ref ClientName, !Ref ProjectName] ]
+  ## ============================================
+  # DB --------------------------------------------
+  DBTableName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      AllowedPattern: "^[a-zA-Z0-9-]+$"
+      Type: String
+      Value: !Join [ "", ["LoginTrail", !GetAtt AppName.Value ] ]
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !GetAtt DBTableName.Value
+      AttributeDefinitions:
+        -
+          AttributeName: userId
+          AttributeType: S
+        -
+          AttributeName: activityDate
+          AttributeType: S
+      KeySchema:
+        -
+          AttributeName: userId
+          KeyType: HASH
+        -
+          AttributeName: activityDate
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  # ============================= Cognito =======================================
+  UserPoolName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      AllowedPattern: "^[a-zA-Z0-9]+$"
+      Type: String
+      Value: !Join [ "", ["test", !Ref ClientName, !Ref ProjectName] ]
+  UserPool:
+    # Only for getting info for user in webapp
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !GetAtt UserPoolName.Value
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+  UserPoolAppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ClientName: CogTestApp
+      # TODO: not supported yet in cloudformation, add idp
+  IDPoolName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      AllowedPattern: "^[a-zA-Z0-9]+$"
+      Type: String
+      Value: !Join [ "", ["test", !Ref ClientName, !Ref ProjectName] ]
+  IDPool:
+    # Only for getting info for user in webapp
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      AllowUnauthenticatedIdentities: false
+      IdentityPoolName: !GetAtt IDPoolName.Value
+      CognitoIdentityProviders:
+        -
+          ClientId: !Ref UserPoolAppClient
+          ProviderName: !GetAtt UserPool.ProviderName
+
+
+  AuthUserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["-", [ !GetAtt AppName.Value, "AuthRole"] ]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Federated:
+                - "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud":
+                  - !Ref IDPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr":
+                  - "authenticated"
+      # IDP permissions ============================================
+      Policies:
+        -
+          PolicyName: "IDPoolCognitoPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                  # FIXME
+                Resource: "*"
+              -
+                Effect: "Allow"
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:BatchGetItem"
+                  - "dynamodb:Query"
+                  - "dynamodb:PutItem"
+                  - "dynamodb:UpdateItem"
+                  - "dynamodb:DeleteItem"
+                Resource: !GetAtt DynamoDBTable.Arn
+                Condition:
+                  "ForAllValues:StringEquals":
+                    "dynamodb:LeadingKeys":
+                      "${cognito-identity.amazonaws.com:sub}"
+  #TODO: for unauth?
+  IDPoolAuthRole:
+    Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+    Properties:
+      IdentityPoolId: !Ref IDPool
+      Roles:
+        authenticated: !GetAtt AuthUserRole.Arn
+  # ============================= FrontEnd ======================================
+  FES3:
+    Type: AWS::S3::Bucket
+    #Probably not required since: Deletion fails for buckets that have contents.
+    #DeletionPolicy: Retain
+    Properties:
+      BucketName: !Join ["-", [!GetAtt AppName.Value, "fe"]]
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          -
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+            AllowedHeaders:
+              - "*"
+            AllowedOrigins:
+              - "*"
+  FES3Origin:
+    Type: AWS::SSM::Parameter
+    Properties:
+      AllowedPattern: '^[a-zA-Z0-9\/-]+$'
+      Type: String
+      Value: !Join [ "", ["S3-",!Ref FES3]]
+  FEPrefix:
+    Type: AWS::SSM::Parameter
+    Properties:
+      AllowedPattern: '^[a-z0-9\.-]+$'
+      Type: String
+      Value: !Join [ "", [ !Ref ClientName, "-", !Ref ProjectName] ]
+  FECloudfrontAccessID:
+    # ID for cloudfront to be able to access bucket
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Join ["-", [!GetAtt AppName.Value,"fe-cloudfront"]]
+  FES3BucketCloudfrontPermission:
+    # Policy to add to bucket to allow the cloudfront ID access to the bucket
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FES3
+      PolicyDocument:
+        Statement:
+          -
+            Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource: !Join [ "", ["arn:aws:s3:::",!Ref FES3,"/*"] ]
+            Principal:
+              AWS: !Join ["", ["arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ",!Ref FECloudfrontAccessID]]
+  FECloudfront:
+    # Ref: https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DistributionConfig.html
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !GetAtt AppName.Value
+        DefaultCacheBehavior:
+          DefaultTTL: 3
+          MaxTTL: 5
+          MinTTL: 0
+          ForwardedValues:
+            QueryString: false
+          # This gets resolved on the console but must add it manually in this script
+          TargetOriginId: !GetAtt FES3Origin.Value
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        Enabled: true
+        Origins:
+          -
+            DomainName: !GetAtt FES3.DomainName
+            # This gets resolved on the console but must add it manually in this script
+            Id: !GetAtt FES3Origin.Value
+            S3OriginConfig:
+              OriginAccessIdentity: !Join [ "", ["origin-access-identity/cloudfront/", !Ref FECloudfrontAccessID ] ]
+        Restrictions:
+          GeoRestriction:
+            Locations:
+              - AU
+              - US
+            RestrictionType: whitelist
+  # ========================= Extras / Admin ===================================
+
+Outputs:
+
+  # APIURL:
+  #   Condition: CreateProdResources
+  #   Description: API URL (/prod and /uat)
+  #   # Formed by BEAPIPath
+  #   Value: !Join [ "/",  [!GetAtt BEAPIBaseURL.Value, !GetAtt ApiPath.Value] ]
+  identityPoolId:
+    Description: "Cognito ID pool"
+    Value: !Ref IDPool
+  userPoolId:
+    Description: "Cognito User pool"
+    Value: !Ref UserPool
+  MANUALstepHostedUI:
+    Description: "See: https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-assign-domain-prefix.html"
+    Value: "Manual user pool hosted UI config step"
+  MANUALstepFederatedIdp:
+    Description: "See: https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-social-idp.html"
+    Value: "Manual user pool IDp config step, requires Google or other setup also"
+  clientId:
+    Description: "Cognito User pool App client ID"
+    Value: !Ref UserPoolAppClient
+  ddbTableName:
+    Description: "Dynamo DB table"
+    Value: !Ref DynamoDBTable
+  Region:
+    Description: AWS region where stack is deployed
+    Value: !Ref "AWS::Region"

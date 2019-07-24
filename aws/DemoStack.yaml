@@ -299,6 +299,9 @@ Outputs:
   userPoolId:
     Description: "Cognito User pool"
     Value: !Ref UserPool
+  MANUALstepDeployFE:
+    Description: "Deploy Frontend to S3"
+    Value: !Ref FES3
   MANUALstepHostedUI:
     Description: "See: https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-assign-domain-prefix.html"
     Value: "Manual user pool hosted UI config step"
@@ -314,3 +317,6 @@ Outputs:
   Region:
     Description: AWS region where stack is deployed
     Value: !Ref "AWS::Region"
+  CfrontURL:
+    Description: URL for webapp via cloudfront
+    Value: !GetAtt FECloudfront.DomainName

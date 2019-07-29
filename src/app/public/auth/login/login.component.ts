@@ -1,5 +1,5 @@
 import { Component, OnInit } from "@angular/core";
-import { Router } from "@angular/router";
+import { Router, ActivatedRoute, ParamMap } from "@angular/router";
 import { UserLoginService } from "../../../service/user-login.service";
 import { ChallengeParameters, CognitoCallback, LoggedInCallback } from "../../../service/cognito.service";
 import { DynamoDBService } from "../../../service/ddb.service";
@@ -18,7 +18,8 @@ export class LoginComponent implements CognitoCallback, LoggedInCallback, OnInit
         callback: null
     };
 
-    constructor(public router: Router,
+    constructor(private route: ActivatedRoute,
+                private router: Router,
                 public ddb: DynamoDBService,
                 public userService: UserLoginService) {
         console.log("LoginComponent constructor");
@@ -26,7 +27,9 @@ export class LoginComponent implements CognitoCallback, LoggedInCallback, OnInit
 
     ngOnInit() {
         this.errorMessage = null;
-        console.log("Checking if the user is already authenticated. If so, then redirect to the secure site");
+        console.log("Checking if the user is already authenticated. If so, then redirect to the secure site (L)");
+        // Can get token if reading params
+        // this.route.snapshot.queryParams;
         this.userService.isAuthenticated(this);
     }
 
